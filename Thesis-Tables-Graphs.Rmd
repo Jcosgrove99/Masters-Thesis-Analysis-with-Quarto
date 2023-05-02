@@ -1,0 +1,101 @@
+---
+title: "Thesis-Tables-Graphs"
+output: html_document
+date: "2023-05-02"
+---
+Importing libraries and data set
+```{r}
+library(gt)
+library(fixest)
+library(tidyverse)
+library(tidyr)
+library(modelsummary)
+library(ggplot2)
+
+
+data <- read.csv("/Users/jakecosgrove/Documents/Thesis/thesis-code/data/FINAL_scaled_2023-04-16.csv")
+data <- rename(data, "Session" = "session_id")
+```
+
+Creating dummy variables for individuals that lost a competition as part of our research design
+```{r}
+data$comp_result <- ifelse((data$tr_result == 0), "Losser", "Tie")
+data$comp_result <- ifelse((data$tr_result == 2), "Winner", data$comp_result)
+data$loss <- ifelse((data$tr_result == 0), 1, 0)
+data$loss_to_die <- ifelse((data$tr_correct > data$tr_other_correct) & (data$tr_result == 0), 1, 0)
+data$loss_tie_to_die <- ifelse((data$tr_correct > data$tr_other_correct) & (data$tr_result == 0 | data$tr_result == 1), 1, 0)
+```
+
+Creating Results Table with Model Summary and gt package
+```{r}
+title <- "Main Results"
+cm <- c('WB_scaled' = 'Wet Bulb Temp', "WB_scaled:versionB" = "Wet Bulb Temp x Version B", "WB_scaled:loss" = "Wet Bulb Temp x Loss", "WB_scaled:versionB:loss" = "Wet Bulb Temp x Version B x Loss", "versionB:loss" = "Version B x Loss", "versionB"="Version B","loss" = "Loss", "q1_genderMale" = "Male", "q2_age" = "Age")
+
+data$OT_WB_scaled <- scale(data$outside_wetbub_c,center=TRUE,scale=TRUE)
+
+models <- list(
+   feols(weak_share_weak_envy_strong ~ WB_scaled * version * loss + outside_wetbub_c| country , cluster = "Session", data = data),
+   feols(weak_share_weak_envy_strong ~ WB_scaled * version * loss + q1_gender  + q2_age + outside_wetbub_c| country, cluster = "Session", data = data),  
+
+  feols(weak_share ~ WB_scaled * version * loss + outside_wetbub_c| country, cluster = "Session", data = data),
+  feols(weak_share ~ WB_scaled * version * loss + q1_gender + q2_age + outside_wetbub_c| country, cluster = "Session", data = data)
+)
+tab <- modelsummary(models, stars = c("*"=0.1, "**"=.05, "***"=.01), coef_map = cm, title = title, gof_omit = "IC|Log|Adj|R2 Within|RMSE|R2|FE: country|Std.Errors", output = "gt")
+
+table <- tab %>%
+  # column labels 
+  tab_spanner(label = md("**Strong Spite**"), columns = 2:3) %>% 
+  tab_spanner(label = md("**Weak Spite**"), columns = 4:5) %>% 
+  tab_footnote(footnote = md("Wet Bulb Temp is a continuous variable of wet bulb celsius standardized"),locations = cells_body(rows = 1, columns = 1 )) %>%
+  tab_footnote(footnote = md("Controls: Outside Wet Bulb Temperature")) %>% 
+    tab_footnote(footnote = md("Fixed Effects: Country")) %>%
+      tab_footnote(footnote = md("Std. Errors Clustered: Session"))
+
+gt::gtsave(table, "/Users/jakecosgrove/Documents/wizard/template/images/New_results.png", vwidth = 2000, vheight = 1500)
+```
+
+Creating line graph to compare treatment effect predictions made from linear regression and causal forest 
+```{r}
+cf_pred <- read.csv("/Users/jakecosgrove/Documents/Machine-Learning-Methods/new_cf_pred_sortedL-2023-04-25.csv")
+reg_pred <- read.csv("/Users/jakecosgrove/Documents/Machine-Learning-Methods/new_reg_pred_sortedL-2023-04-25.csv")
+
+my_plot <- ggplot(data = NULL, aes(x = percent_id,  y=predictions)) +
+  geom_line(data = reg_pred, col = 'red', size = .7) + 
+  geom_line(data = cf_pred, col = 'blue', size = .7) +
+  scale_y_continuous(limits = c(-.5, .5)) +
+  scale_x_continuous(sec.axis = sec_axis(~ ., name = "Quantile",  breaks = c(.2, .4, .6, .8 , 1), labels = c("20%", "40%", "60%", "80%", "100%"))) +
+  theme(axis.text.x = element_text(size = 12)) + 
+  theme(axis.text.y = element_text(size = 12)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.title.x = element_text(size = 15)) + 
+  labs(title = "Sorted Predicted Treatment Effects",
+       x = "Individual Observations", 
+       y = "Predicted Treatment Effect"
+    )
+
+ggsave("/Users/jakecosgrove/Documents/Thesis/Machine-Learning-Methods/ML-line-graph.png", my_plot)
+```
+
+Creating non-parametric graph separated by experimental version the individual played
+```{r}
+data <- read.csv("/Users/jakecosgrove/Documents/Thesis/thesis-code/data/Final-Data-2023-04-11.csv")
+
+ggplot(data, aes(x = inside_wetbub_c, y = weak_share_weak_envy_strong, color = version)) + 
+  geom_point(alpha = .2) + 
+  geom_smooth(alpha = .09, size = .9) + 
+  scale_color_manual(values = c("#00bb38", "#619dff"), labels = c("Version A", "Version B")) + 
+  theme_classic() +
+  theme_classic() +
+  labs(title = "Entire Sample",
+       x = "Wet Bulb Celsius",
+       y = "Strong Spite Outcome"
+    ) +
+  theme(axis.text.x = element_text(size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.title.x = element_text(size = 15))
+
+ggsave("non-parametric-by-version-sample.png",width = 8, height = 6, dpi = 500)
+```
+
+
